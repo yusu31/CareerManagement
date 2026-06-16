@@ -5,7 +5,7 @@
 **CareerSync AI** は転職活動用の個人専用Webアプリ。企業URLを1つ入力するだけでGemini AIが自動分析し、スコアリング・比較・選考ステータスを一元管理できる「選考コマンドセンター」。
 
 - 作成者: yusu31
-- リポジトリ: https://github.com/yusu31/careersync-ai
+- リポジトリ: https://github.com/yusu31/CareerManagement
 - 開発開始: 2026年6月16日
 
 ---

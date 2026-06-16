@@ -39,8 +39,8 @@
 ### 1. リポジトリをクローン
 
 ```bash
-git clone https://github.com/yusu31/careersync-ai.git
-cd careersync-ai
+git clone https://github.com/yusu31/CareerManagement.git
+cd CareerManagement
 ```
 
 ### 2. Python仮想環境を作成・有効化
