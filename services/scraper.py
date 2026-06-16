@@ -5,9 +5,12 @@
 スクレイピングが失敗した場合は空文字を返し、AIがURL情報のみで分析する。
 """
 
+import logging
 import re
 import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 # 取得テキストの最大文字数。Geminiのトークン上限に引っかからないよう制限する
 _MAX_TEXT_LENGTH = 6000
@@ -37,9 +40,12 @@ def scrape_company(url: str) -> str:
         response.raise_for_status()
         # 文字化け対策: レスポンスのエンコーディングを自動検出
         response.encoding = response.apparent_encoding
-        return _extract_text(response.text)
-    except Exception:
+        text = _extract_text(response.text)
+        logger.debug("スクレイピング成功 [%s]: %d文字取得", url, len(text))
+        return text
+    except Exception as e:
         # タイムアウト・接続拒否・404などすべてを空文字で吸収する
+        logger.warning("スクレイピング失敗 [%s]: %s", url, e)
         return ""
 
 
