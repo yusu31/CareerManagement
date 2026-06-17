@@ -126,8 +126,11 @@ async function selectCompany(id) {
   renderCompanyList();
   const company = await api(`/api/companies/${id}`);
   renderDetail(company);
-  // 企業選択時にAIバブルを表示してパネルの企業名を更新
   showAiBubble(company.name || company.url);
+  // 勤務地が登録済みで通勤データが未算出なら自動でGemini算出
+  if (company.location && !company.commute_data) {
+    calcCommuteAuto(id);
+  }
 }
 
 function renderDetail(c) {
@@ -167,7 +170,7 @@ function renderDetail(c) {
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
       ${infoCard('勤務地',     c.location)}
       ${infoCard('勤務形態',   c.work_style)}
-      ${infoCard('通勤（旧）', c.commute_time_car ? `${c.commute_time_car}分` : null)}
+      ${commuteInfoCard(c)}
       ${infoCard('開発形態',   c.development_type)}
       ${infoCard('年収レンジ', c.salary)}
       ${infoCard('予想初年収', c.expected_first_salary ? `${c.expected_first_salary}万円` : null)}
@@ -176,9 +179,6 @@ function renderDetail(c) {
     </div>
 
     ${analyzed ? renderAnalysisSection(c, scores, sw, strategy, skillStack) : renderNotAnalyzed()}
-
-    <!-- 通勤カード -->
-    ${renderCommuteCard(c)}
 
     <!-- 求人元タグ -->
     ${renderJobSourcesCard(c)}
@@ -499,88 +499,237 @@ function infoCard(label, value) {
 
 // ── 通勤カード（詳細パネル用）────────────────────────────────────────────
 
-function renderCommuteCard(c) {
+// 通勤時間を "X時間Y分" 形式に整形
+function fmtMinutes(min) {
+  if (min == null) return null;
+  const h = Math.floor(min / 60), m = min % 60;
+  return h > 0 ? `${h}時間${m > 0 ? m + '分' : ''}` : `${m}分`;
+}
+
+const COMMUTE_MODES = [
+  { key: 'car',        icon: '🚗', label: '車' },
+  { key: 'shinkansen', icon: '🚄', label: '新幹線+電車' },
+  { key: 'train',      icon: '🚃', label: '在来線' },
+  { key: 'bus',        icon: '🚌', label: 'バス' },
+  { key: 'walk',       icon: '🚶', label: '徒歩' },
+];
+
+// グリッド内の小さい通勤カード（クリックでbodyにドロップダウンをportal描画）
+function commuteInfoCard(c) {
   const cd = parseJSON(c.commute_data);
-  const MODES = [
-    { key: 'car',        icon: '🚗', label: '車' },
-    { key: 'shinkansen', icon: '🚄', label: '新幹線+電車' },
-    { key: 'train',      icon: '🚃', label: '在来線' },
-  ];
+  const currentMode = c._commuteMode || 'car';
+  const mInfo = COMMUTE_MODES.find(m => m.key === currentMode);
+  const d = cd?.[currentMode];
 
-  const modeButtons = MODES.map(m =>
-    `<button class="commute-transport-tab ${m.key === 'car' ? 'active' : ''}"
-       onclick="switchDetailCommuteTab(this,'${c.id}','${m.key}')" data-mode="${m.key}">
-       ${m.icon} ${m.label}
-     </button>`
-  ).join('');
-
-  let contentHtml = '';
+  let valueHtml;
   if (!cd) {
-    if (!c.location) {
-      contentHtml = `<p class="text-sm text-gray-400">勤務地が未登録のため算出できません</p>`;
-    } else {
-      contentHtml = `
-        <p class="text-sm text-gray-500 mb-3">郡山市字原中からの通勤情報を算出します</p>
-        <button onclick="calcCommuteDetail(${c.id})"
-          class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-4 py-1.5 rounded-lg font-medium transition-colors">
-          🗺 Geminiで通勤時間を算出
-        </button>`;
-    }
+    valueHtml = c.location
+      ? `<span class="text-gray-400 text-xs">算出中...</span>`
+      : `<span class="text-gray-300 text-xs">勤務地未登録</span>`;
+  } else if (!d || d.minutes == null) {
+    valueHtml = `<span class="text-red-400 text-xs font-medium">非現実的</span>`;
   } else {
-    const buildStats = (d) => {
-      if (!d) return '<p class="text-sm text-gray-400">データなし</p>';
-      const h = Math.floor((d.minutes || 0) / 60);
-      const m = (d.minutes || 0) % 60;
-      const timeStr = d.minutes ? (h > 0 ? `${h}時間${m > 0 ? m+'分' : ''}` : `${m}分`) : '—';
-      const fCls = d.feasibility === 'daily' ? '#15803d' : d.feasibility === 'occasional' ? '#a16207' : '#b91c1c';
-      const fLabel = d.feasibility === 'daily' ? '毎日通勤OK' : d.feasibility === 'occasional' ? '週1〜2回なら可' : '通勤は困難';
-      return `
-        <div class="flex gap-3 flex-wrap mb-3">
-          <div class="commute-stat"><span class="commute-stat-value">${timeStr}</span><span class="commute-stat-label">片道</span></div>
-          <div class="commute-stat"><span class="commute-stat-value">${d.distance_km ? d.distance_km+'km' : '—'}</span><span class="commute-stat-label">距離</span></div>
-          <div class="commute-stat"><span class="commute-stat-value">${d.cost_yen ? (d.cost_yen/100*100|0).toLocaleString()+'円' : '—'}</span><span class="commute-stat-label">片道費用</span></div>
-        </div>
-        <p class="text-xs text-gray-500 mb-1">📍 ${d.route || '—'}</p>
-        <p class="text-xs font-medium" style="color:${fCls}">● ${fLabel}</p>
-        <button onclick="calcCommuteDetail(${c.id})" class="mt-3 text-xs text-gray-400 hover:text-indigo-500 transition-colors">再算出</button>`;
-    };
-
-    contentHtml = MODES.map((m, i) =>
-      `<div id="commute-detail-panel-${c.id}-${m.key}" class="${i === 0 ? '' : 'hidden'}">${buildStats(cd[m.key])}</div>`
-    ).join('');
+    const fCls = d.feasibility === 'daily' ? 'text-green-600'
+               : d.feasibility === 'occasional' ? 'text-yellow-600' : 'text-red-500';
+    valueHtml = `<span class="${fCls} font-semibold">${fmtMinutes(d.minutes)}</span>`;
   }
 
   return `
-    <div class="bg-white rounded-xl border border-gray-200 p-4 mt-5">
-      <h3 class="text-sm font-semibold text-gray-700 mb-3">🗺 通勤情報（郡山市字原中から）</h3>
-      <div class="flex gap-2 mb-4">${modeButtons}</div>
-      <div id="commute-detail-content-${c.id}">${contentHtml}</div>
+    <div id="commute-grid-card-${c.id}"
+         class="bg-white rounded-xl border border-gray-200 p-3 cursor-pointer
+                hover:border-indigo-300 hover:shadow-sm transition-all group"
+         onclick="toggleCommuteDropdown(${c.id})">
+      <div class="text-xs text-gray-400 mb-0.5 flex items-center justify-between">
+        <span>通勤 <span id="commute-mode-label-${c.id}">${mInfo?.icon || '🚗'} ${mInfo?.label || '車'}</span></span>
+        <span id="commute-caret-${c.id}" class="text-gray-300 group-hover:text-indigo-400 transition-all text-xs">▾</span>
+      </div>
+      <div class="text-sm" id="commute-time-display-${c.id}">${valueHtml}</div>
     </div>`;
 }
 
-function switchDetailCommuteTab(btn, companyId, mode) {
-  const card = btn.closest('.bg-white');
-  card.querySelectorAll('.commute-transport-tab').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  card.querySelectorAll(`[id^="commute-detail-panel-${companyId}-"]`).forEach(el => el.classList.add('hidden'));
-  const panel = document.getElementById(`commute-detail-panel-${companyId}-${mode}`);
-  if (panel) panel.classList.remove('hidden');
+// bodyにportalとして描画（overflow:hiddenに影響されない）
+function toggleCommuteDropdown(companyId) {
+  const existing = document.getElementById('commute-portal');
+  const isMyPortal = existing?.dataset.forId == companyId;
+  closeCommutePortal();
+  if (isMyPortal) return; // 同じカードをもう一度クリックで閉じる
+
+  const card = document.getElementById(`commute-grid-card-${companyId}`);
+  if (!card) return;
+  const c = state.companies?.find(c => c.id == companyId);
+  if (!c) return;
+
+  const rect = card.getBoundingClientRect();
+  const cd = parseJSON(c.commute_data);
+  const currentMode = c._commuteMode || 'car';
+
+  const portal = document.createElement('div');
+  portal.id = 'commute-portal';
+  portal.dataset.forId = companyId;
+  portal.style.cssText = `
+    position:fixed;
+    left:${rect.left}px;
+    top:${rect.bottom + 4}px;
+    min-width:${Math.max(rect.width, 272)}px;
+    z-index:9999;
+    background:white;
+    border:1px solid #e5e7eb;
+    border-radius:14px;
+    box-shadow:0 8px 32px rgba(0,0,0,0.14),0 2px 8px rgba(99,102,241,0.08);
+    padding:8px;
+    animation:popoverIn 0.15s ease-out;
+  `;
+
+  // Googleマップ travelmode マッピング
+  const GM_MODE = { car: 'driving', shinkansen: 'transit', train: 'transit', bus: 'transit', walk: 'walking' };
+  const origin = encodeURIComponent('福島県郡山市字原中');
+  const dest   = encodeURIComponent(c.location || '');
+
+  const rows = COMMUTE_MODES.map(m => {
+    const md = cd?.[m.key];
+    const time = md?.minutes ? fmtMinutes(md.minutes)
+               : cd ? (md === undefined ? '—' : '非現実的') : '—';
+    const fCls = !cd || md?.minutes == null
+               ? 'text-gray-400'
+               : md.feasibility === 'daily'      ? 'text-green-600 font-semibold'
+               : md.feasibility === 'occasional'  ? 'text-yellow-600 font-semibold'
+               : 'text-red-400 font-medium';
+    const dist   = md?.distance_km ? ` · ${md.distance_km}km` : '';
+    const active = currentMode === m.key;
+    const gmUrl  = c.location
+      ? `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&travelmode=${GM_MODE[m.key]}`
+      : null;
+
+    return `
+      <div class="flex items-center gap-1 rounded-lg ${active ? 'bg-indigo-50' : ''} hover:bg-indigo-50 transition-colors pr-1">
+        <button onclick="selectCommuteMode(${companyId},'${m.key}')"
+          class="flex-1 flex items-center gap-3 px-2 py-2 text-left">
+          <span class="text-base w-5 text-center">${m.icon}</span>
+          <span class="flex-1">
+            <span class="text-sm text-gray-700 font-medium">${m.label}</span>
+            <span class="block text-xs ${fCls}">${time}${dist}</span>
+          </span>
+          ${active ? '<span class="text-indigo-500 text-xs mr-1">✓</span>' : ''}
+        </button>
+        ${gmUrl ? `
+          <a href="${gmUrl}" target="_blank" rel="noopener"
+             onclick="event.stopPropagation()"
+             title="Googleマップで経路を開く"
+             class="shrink-0 p-1.5 rounded-lg text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+            </svg>
+          </a>` : ''}
+      </div>`;
+  }).join('');
+
+  portal.innerHTML = `
+    <p class="text-xs text-gray-400 px-2 py-1 mb-1">🗺 郡山市字原中 → 勤務地</p>
+    ${rows}
+    <div class="border-t border-gray-100 mt-2 pt-2">
+      <button id="commute-calc-btn-${companyId}"
+        onclick="calcCommuteInCard(${companyId})"
+        class="w-full text-xs py-1.5 rounded-lg transition-colors
+               ${cd ? 'text-gray-400 hover:text-indigo-500 hover:bg-indigo-50' : 'text-indigo-600 hover:text-indigo-800 font-medium hover:bg-indigo-50'}">
+        ${cd ? '再算出' : '🗺 Geminiで通勤時間を算出'}
+      </button>
+    </div>`;
+
+  document.body.appendChild(portal);
+  const caret = document.getElementById(`commute-caret-${companyId}`);
+  if (caret) caret.style.transform = 'rotate(180deg)';
 }
 
-async function calcCommuteDetail(companyId) {
-  const btn = event.target;
-  btn.textContent = '算出中...';
-  btn.disabled = true;
+function closeCommutePortal() {
+  const portal = document.getElementById('commute-portal');
+  if (!portal) return;
+  const id = portal.dataset.forId;
+  portal.remove();
+  const caret = document.getElementById(`commute-caret-${id}`);
+  if (caret) caret.style.transform = '';
+}
+
+// 交通手段を選択してカードを更新
+function selectCommuteMode(companyId, mode) {
+  closeCommutePortal();
+  const c = state.companies?.find(c => c.id == companyId);
+  if (!c) return;
+  c._commuteMode = mode;
+
+  const cd = parseJSON(c.commute_data);
+  const mInfo = COMMUTE_MODES.find(m => m.key === mode);
+  const d = cd?.[mode];
+
+  const label = document.getElementById(`commute-mode-label-${companyId}`);
+  if (label) label.textContent = `${mInfo?.icon} ${mInfo?.label}`;
+
+  const display = document.getElementById(`commute-time-display-${companyId}`);
+  if (display) {
+    let html;
+    if (!d || d.minutes == null) {
+      html = `<span class="${!d ? 'text-gray-400' : 'text-red-400'} text-xs">${!d ? '—' : '非現実的'}</span>`;
+    } else {
+      const fCls = d.feasibility === 'daily' ? 'text-green-600'
+                 : d.feasibility === 'occasional' ? 'text-yellow-600' : 'text-red-500';
+      html = `<span class="${fCls} font-semibold">${fmtMinutes(d.minutes)}</span>`;
+    }
+    display.innerHTML = html;
+  }
+}
+
+// グリッドカードから通勤算出（手動）
+async function calcCommuteInCard(companyId) {
+  const btn = document.getElementById(`commute-calc-btn-${companyId}`);
+  if (btn) { btn.textContent = '算出中...'; btn.disabled = true; }
   try {
-    const res = await api(`/api/companies/${companyId}/commute`, { method: 'POST' });
+    await api(`/api/companies/${companyId}/commute`, { method: 'POST' });
+    closeCommutePortal();
     await selectCompany(companyId);
     showToast('通勤時間を算出しました', 'success');
   } catch (e) {
     showToast(`エラー: ${e.message}`, 'error');
-    btn.textContent = '🗺 Geminiで通勤時間を算出';
-    btn.disabled = false;
+    if (btn) { btn.textContent = '再算出'; btn.disabled = false; }
   }
 }
+
+// 企業選択時の自動算出（勤務地あり・未算出の場合）
+async function calcCommuteAuto(companyId) {
+  try {
+    const updated = await api(`/api/companies/${companyId}/commute`, { method: 'POST' });
+    // state更新して表示を切り替え（ページ再描画なし）
+    if (state.companies) {
+      const idx = state.companies.findIndex(c => c.id === companyId);
+      if (idx !== -1) state.companies[idx] = updated;
+    }
+    // グリッドカードの表示だけ更新
+    const card = document.getElementById(`commute-grid-card-${companyId}`);
+    if (card) {
+      const c = updated;
+      c._commuteMode = 'car';
+      const cd = parseJSON(c.commute_data);
+      const d = cd?.car;
+      const label = document.getElementById(`commute-mode-label-${companyId}`);
+      if (label) label.textContent = '🚗 車';
+      const display = document.getElementById(`commute-time-display-${companyId}`);
+      if (display && d?.minutes) {
+        const fCls = d.feasibility === 'daily' ? 'text-green-600'
+                   : d.feasibility === 'occasional' ? 'text-yellow-600' : 'text-red-500';
+        display.innerHTML = `<span class="${fCls} font-semibold">${fmtMinutes(d.minutes)}</span>`;
+      }
+    }
+  } catch (e) {
+    // 自動算出失敗はサイレントに無視
+  }
+}
+
+// カード外クリックでドロップダウンを閉じる
+document.addEventListener('click', e => {
+  const portal = document.getElementById('commute-portal');
+  if (!portal) return;
+  const cardId = portal.dataset.forId;
+  const card = document.getElementById(`commute-grid-card-${cardId}`);
+  if (!portal.contains(e.target) && !card?.contains(e.target)) closeCommutePortal();
+});
 
 // ── 求人元カード（詳細パネル用）──────────────────────────────────────────
 
