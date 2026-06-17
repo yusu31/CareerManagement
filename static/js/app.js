@@ -770,6 +770,176 @@ document.getElementById('form-save-schedule').addEventListener('submit', async e
 
 // ── 起動 ──────────────────────────────────────────────────────────────────
 
+// ── 比較ビュー ─────────────────────────────────────────────────────────────
+
+const compareState = { sortCol: 'total', sortAsc: false };
+
+const STATUS_ORDER = {
+  '気になる': 0, '応募済み': 1, '書類選考中': 2, '面接中': 3,
+  '内定': 4, '辞退': 5, '不合格': 6,
+};
+
+function scoreClass(val) {
+  if (val == null || val === '') return 'none';
+  const n = Number(val);
+  if (n >= 8) return 'high';
+  if (n >= 5) return 'mid';
+  return 'low';
+}
+
+function scoreChip(val) {
+  if (val == null || val === '') return '<span class="score-chip none">—</span>';
+  return `<span class="score-chip ${scoreClass(val)}">${Number(val).toFixed(1)}</span>`;
+}
+
+function calcTotal(scores, hiring, tech, career) {
+  const vals = [
+    scores?.growth, scores?.stability, scores?.culture_fit,
+    scores?.work_life_balance, scores?.compensation,
+    hiring, tech, career,
+  ].filter(v => v != null && v !== '').map(Number);
+  if (vals.length === 0) return null;
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+
+function renderComparison() {
+  const tbody = document.getElementById('comparison-tbody');
+  if (!tbody) return;
+
+  const companies = state.companies || [];
+
+  const rows = companies.map(c => {
+    const scores = parseJSON(c.scores);
+    const total  = calcTotal(
+      scores, c.hiring_probability_score, c.tech_growth_score, c.career_growth_score
+    );
+    return { c, scores, total };
+  });
+
+  const col = compareState.sortCol;
+  rows.sort((a, b) => {
+    let va, vb;
+    switch (col) {
+      case 'name':              va = a.c.name || ''; vb = b.c.name || ''; break;
+      case 'status':            va = STATUS_ORDER[a.c.status] ?? 99; vb = STATUS_ORDER[b.c.status] ?? 99; break;
+      case 'hiring':            va = a.c.hiring_probability_score ?? -1; vb = b.c.hiring_probability_score ?? -1; break;
+      case 'growth':            va = a.scores?.growth ?? -1;             vb = b.scores?.growth ?? -1; break;
+      case 'stability':         va = a.scores?.stability ?? -1;          vb = b.scores?.stability ?? -1; break;
+      case 'culture_fit':       va = a.scores?.culture_fit ?? -1;        vb = b.scores?.culture_fit ?? -1; break;
+      case 'work_life_balance': va = a.scores?.work_life_balance ?? -1;  vb = b.scores?.work_life_balance ?? -1; break;
+      case 'compensation':      va = a.scores?.compensation ?? -1;       vb = b.scores?.compensation ?? -1; break;
+      case 'tech':              va = a.c.tech_growth_score ?? -1;        vb = b.c.tech_growth_score ?? -1; break;
+      case 'career':            va = a.c.career_growth_score ?? -1;      vb = b.c.career_growth_score ?? -1; break;
+      default:                  va = a.total ?? -1; vb = b.total ?? -1; break;
+    }
+    if (typeof va === 'string') {
+      return compareState.sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    }
+    return compareState.sortAsc ? va - vb : vb - va;
+  });
+
+  const STATUS_COLORS = {
+    '気になる':   'bg-gray-100 text-gray-600',
+    '応募済み':   'bg-blue-100 text-blue-700',
+    '書類選考中': 'bg-indigo-100 text-indigo-700',
+    '面接中':     'bg-violet-100 text-violet-700',
+    '内定':       'bg-green-100 text-green-700',
+    '辞退':       'bg-gray-100 text-gray-400',
+    '不合格':     'bg-red-100 text-red-400',
+  };
+
+  tbody.innerHTML = rows.map(({ c, scores, total }) => {
+    const analyzed   = c.scores !== null;
+    const statusCls  = STATUS_COLORS[c.status] || 'bg-gray-100 text-gray-500';
+    const totalChip  = total != null
+      ? `<span class="score-chip total-score-cell ${scoreClass(total)}">${total.toFixed(1)}</span>`
+      : '<span class="score-chip none">未分析</span>';
+
+    return `<tr onclick="selectCompanyAndSwitchList(${c.id})">
+      <td class="px-4 py-3">
+        <div class="font-medium text-gray-800 truncate max-w-48">${c.name || c.url}</div>
+        ${c.industry ? `<div class="text-xs text-gray-400 truncate">${c.industry}</div>` : ''}
+      </td>
+      <td class="px-3 py-3 whitespace-nowrap">
+        <span class="text-xs px-2 py-0.5 rounded-full font-medium ${statusCls}">${c.status}</span>
+      </td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(c.hiring_probability_score) : '<span class="score-chip none">未分析</span>'}</td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(scores?.growth)             : '<span class="score-chip none">—</span>'}</td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(scores?.stability)          : '<span class="score-chip none">—</span>'}</td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(scores?.culture_fit)        : '<span class="score-chip none">—</span>'}</td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(scores?.work_life_balance)  : '<span class="score-chip none">—</span>'}</td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(scores?.compensation)       : '<span class="score-chip none">—</span>'}</td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(c.tech_growth_score)        : '<span class="score-chip none">—</span>'}</td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(c.career_growth_score)      : '<span class="score-chip none">—</span>'}</td>
+      <td class="px-3 py-3 text-center">${totalChip}</td>
+    </tr>`;
+  }).join('');
+
+  // ソートアイコン更新
+  document.querySelectorAll('.sort-th').forEach(th => {
+    th.classList.remove('active');
+    th.querySelector('.sort-icon').textContent = '↕';
+  });
+  const activeTh = document.querySelector(`.sort-th[data-col="${col}"]`);
+  if (activeTh) {
+    activeTh.classList.add('active');
+    activeTh.querySelector('.sort-icon').textContent = compareState.sortAsc ? '↑' : '↓';
+  }
+}
+
+document.querySelectorAll('.sort-th').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (compareState.sortCol === col) {
+      compareState.sortAsc = !compareState.sortAsc;
+    } else {
+      compareState.sortCol = col;
+      compareState.sortAsc = false;
+    }
+    renderComparison();
+  });
+});
+
+function selectCompanyAndSwitchList(id) {
+  switchView('list');
+  selectCompany(id);
+}
+
+// ── ビュー切り替え ──────────────────────────────────────────────────────────
+
+function switchView(mode) {
+  const sidebar    = document.getElementById('sidebar');
+  const detailSec  = document.getElementById('detail-section');
+  const compareSec = document.getElementById('comparison-section');
+  const btnList    = document.getElementById('btn-view-list');
+  const btnCompare = document.getElementById('btn-view-compare');
+  const bubble     = document.getElementById('btn-ai-bubble');
+
+  if (mode === 'compare') {
+    sidebar.classList.add('hidden');
+    detailSec.classList.add('hidden');
+    compareSec.classList.remove('hidden');
+    btnList.classList.remove('bg-indigo-600', 'text-white');
+    btnList.classList.add('bg-white', 'text-gray-500');
+    btnCompare.classList.add('bg-indigo-600', 'text-white');
+    btnCompare.classList.remove('bg-white', 'text-gray-500');
+    if (bubble) bubble.classList.add('hidden');
+    renderComparison();
+  } else {
+    sidebar.classList.remove('hidden');
+    detailSec.classList.remove('hidden');
+    compareSec.classList.add('hidden');
+    btnList.classList.add('bg-indigo-600', 'text-white');
+    btnList.classList.remove('bg-white', 'text-gray-500');
+    btnCompare.classList.remove('bg-indigo-600', 'text-white');
+    btnCompare.classList.add('bg-white', 'text-gray-500');
+    if (bubble && state.selectedId) bubble.classList.remove('hidden');
+  }
+}
+
+document.getElementById('btn-view-list').addEventListener('click',    () => switchView('list'));
+document.getElementById('btn-view-compare').addEventListener('click', () => switchView('compare'));
+
 init();
 
 // ════════════════════════════════════════════════════════════════════════════

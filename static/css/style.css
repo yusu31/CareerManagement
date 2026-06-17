@@ -21,6 +21,37 @@
 #status-filters::-webkit-scrollbar { display: none; }
 #status-filters { scrollbar-width: none; }
 
+/* ── 比較ビュー ───────────────────────────────────────────── */
+
+.score-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+.score-chip-high, .score-chip.high { background: #dcfce7; color: #15803d; }
+.score-chip-mid,  .score-chip.mid  { background: #fef9c3; color: #a16207; }
+.score-chip-low,  .score-chip.low  { background: #fee2e2; color: #b91c1c; }
+.score-chip.none  { background: #f3f4f6; color: #9ca3af; font-weight: 400; }
+
+#comparison-table tbody tr {
+  border-bottom: 1px solid #f3f4f6;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+#comparison-table tbody tr:hover  { background: #f8f9ff; }
+#comparison-table tbody tr:last-child { border-bottom: none; }
+
+.sort-th.active            { color: #4f46e5; }
+.sort-th.active .sort-icon { color: #4f46e5; }
+.total-score-cell          { font-weight: 700; }
+.view-toggle-btn           { transition: background 0.15s, color 0.15s; }
+
 /* ── AIチャットバブル ──────────────────────────────────────── */
 
 /* グラデーション + GPU アクセラレーション */
