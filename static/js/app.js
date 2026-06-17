@@ -107,7 +107,7 @@ function renderCompanyList() {
         </div>
         <div class="text-xs text-gray-400 mt-0.5 truncate">${c.url}</div>
         <div class="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
-          ${c.hiring_probability_score ? `<span>採用 <b>${c.hiring_probability_score}</b>/10</span>` : ''}
+          ${c.hiring_probability_score ? `<span>採用 <b>${Math.round(c.hiring_probability_score)}%</b></span>` : ''}
           ${c.expected_first_salary   ? `<span>💴 ${c.expected_first_salary}万</span>` : ''}
           ${!analyzed ? '<span class="text-orange-400 font-medium">未分析</span>' : ''}
         </div>
@@ -263,7 +263,7 @@ function renderAnalysisSection(c, scores, sw, strategy, skillStack) {
       <div class="bg-white rounded-xl border border-gray-200 p-4">
         <h3 class="text-sm font-semibold text-gray-700 mb-3">個人最適化スコア</h3>
         <div class="space-y-3">
-          ${scoreBar('採用可能性',   c.hiring_probability_score, 'blue')}
+          ${hiringBar(c.hiring_probability_score)}
           ${scoreBar('技術成長しやすさ', c.tech_growth_score,   'indigo')}
           ${scoreBar('キャリア成長', c.career_growth_score,      'purple')}
           ${c.inexperienced_ok !== null ? `
@@ -502,6 +502,23 @@ function scoreBar(label, score, color) {
       </div>
       <div class="bg-gray-100 rounded-full h-1.5">
         <div class="${bg} h-1.5 rounded-full transition-all" style="width:${score * 10}%"></div>
+      </div>
+    </div>`;
+}
+
+// 採用確率専用バー（0〜100%スケール）
+function hiringBar(score) {
+  if (score === null || score === undefined) return '';
+  const pct = Math.min(Math.round(score), 100);
+  const color = pct >= 70 ? 'text-green-600' : pct >= 40 ? 'text-yellow-600' : 'text-red-500';
+  return `
+    <div class="score-bar-hiring">
+      <div class="flex justify-between text-xs mb-1">
+        <span class="text-gray-600">採用可能性</span>
+        <span class="font-semibold ${color}">${pct}%</span>
+      </div>
+      <div class="bg-gray-100 rounded-full h-1.5">
+        <div class="bg-blue-500 h-1.5 rounded-full transition-all" style="width:${pct}%"></div>
       </div>
     </div>`;
 }
@@ -769,6 +786,315 @@ document.getElementById('form-save-schedule').addEventListener('submit', async e
 });
 
 // ── 起動 ──────────────────────────────────────────────────────────────────
+
+// ── 比較ビュー ─────────────────────────────────────────────────────────────
+
+// ── 比較ビュー共通 ─────────────────────────────────────────────────────────
+
+const compareState = { sortCol: 'total', sortAsc: false, tab: 'score' };
+const condState    = { sortCol: 'salary', sortAsc: false };
+
+const STATUS_ORDER = {
+  '気になる': 0, '応募済み': 1, '書類選考中': 2, '面接中': 3,
+  '内定': 4, '辞退': 5, '不合格': 6,
+};
+
+const STATUS_COLORS = {
+  '気になる':   'bg-gray-100 text-gray-600',
+  '応募済み':   'bg-blue-100 text-blue-700',
+  '書類選考中': 'bg-indigo-100 text-indigo-700',
+  '面接中':     'bg-violet-100 text-violet-700',
+  '内定':       'bg-green-100 text-green-700',
+  '辞退':       'bg-gray-100 text-gray-400',
+  '不合格':     'bg-red-100 text-red-400',
+};
+
+function scoreClass(val) {
+  if (val == null || val === '') return 'none';
+  const n = Number(val);
+  if (n >= 8) return 'high';
+  if (n >= 5) return 'mid';
+  return 'low';
+}
+
+// 採用確率専用（0〜100%スケール）
+function hiringClass(val) {
+  if (val == null || val === '') return 'none';
+  const n = Number(val);
+  if (n >= 70) return 'high';
+  if (n >= 40) return 'mid';
+  return 'low';
+}
+
+function scoreChip(val) {
+  if (val == null || val === '') return '<span class="score-chip none">—</span>';
+  return `<span class="score-chip ${scoreClass(val)}">${Number(val).toFixed(1)}</span>`;
+}
+
+function hiringChip(val) {
+  if (val == null || val === '') return '<span class="score-chip none">—</span>';
+  return `<span class="score-chip ${hiringClass(val)}">${Math.round(Number(val))}%</span>`;
+}
+
+// 総合スコア: hiring_probability_score は0〜100なので除外して0〜10系だけ平均
+function calcTotal(scores, tech, career) {
+  const vals = [
+    scores?.growth, scores?.stability, scores?.culture_fit,
+    scores?.work_life_balance, scores?.compensation,
+    tech, career,
+  ].filter(v => v != null && v !== '').map(Number);
+  if (vals.length === 0) return null;
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+
+function nameCell(c) {
+  return `<td class="px-4 py-3">
+    <div class="font-medium text-gray-800 truncate max-w-48">${c.name || c.url}</div>
+    ${c.industry ? `<div class="text-xs text-gray-400 truncate">${c.industry}</div>` : ''}
+  </td>`;
+}
+
+function statusCell(c) {
+  const cls = STATUS_COLORS[c.status] || 'bg-gray-100 text-gray-500';
+  return `<td class="px-3 py-3 whitespace-nowrap">
+    <span class="text-xs px-2 py-0.5 rounded-full font-medium ${cls}">${c.status}</span>
+  </td>`;
+}
+
+// ── スコアタブ ──────────────────────────────────────────────────────────────
+
+function renderComparison() {
+  const tbody = document.getElementById('comparison-tbody');
+  if (!tbody) return;
+
+  const companies = state.companies || [];
+  const rows = companies.map(c => {
+    const scores = parseJSON(c.scores);
+    const total  = calcTotal(scores, c.tech_growth_score, c.career_growth_score);
+    return { c, scores, total };
+  });
+
+  const col = compareState.sortCol;
+  rows.sort((a, b) => {
+    let va, vb;
+    switch (col) {
+      case 'name':              va = a.c.name || ''; vb = b.c.name || ''; break;
+      case 'status':            va = STATUS_ORDER[a.c.status] ?? 99; vb = STATUS_ORDER[b.c.status] ?? 99; break;
+      case 'hiring':            va = a.c.hiring_probability_score ?? -1; vb = b.c.hiring_probability_score ?? -1; break;
+      case 'growth':            va = a.scores?.growth ?? -1;             vb = b.scores?.growth ?? -1; break;
+      case 'stability':         va = a.scores?.stability ?? -1;          vb = b.scores?.stability ?? -1; break;
+      case 'culture_fit':       va = a.scores?.culture_fit ?? -1;        vb = b.scores?.culture_fit ?? -1; break;
+      case 'work_life_balance': va = a.scores?.work_life_balance ?? -1;  vb = b.scores?.work_life_balance ?? -1; break;
+      case 'compensation':      va = a.scores?.compensation ?? -1;       vb = b.scores?.compensation ?? -1; break;
+      case 'tech':              va = a.c.tech_growth_score ?? -1;        vb = b.c.tech_growth_score ?? -1; break;
+      case 'career':            va = a.c.career_growth_score ?? -1;      vb = b.c.career_growth_score ?? -1; break;
+      default:                  va = a.total ?? -1; vb = b.total ?? -1; break;
+    }
+    if (typeof va === 'string') return compareState.sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    return compareState.sortAsc ? va - vb : vb - va;
+  });
+
+  tbody.innerHTML = rows.map(({ c, scores, total }) => {
+    const analyzed  = c.scores !== null;
+    const totalChip = total != null
+      ? `<span class="score-chip total-score-cell ${scoreClass(total)}">${total.toFixed(1)}</span>`
+      : '<span class="score-chip none">未分析</span>';
+
+    return `<tr onclick="selectCompanyAndSwitchList(${c.id})">
+      ${nameCell(c)}${statusCell(c)}
+      <td class="px-3 py-3 text-center">${analyzed ? hiringChip(c.hiring_probability_score) : '<span class="score-chip none">未分析</span>'}</td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(scores?.growth)             : '<span class="score-chip none">—</span>'}</td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(scores?.stability)          : '<span class="score-chip none">—</span>'}</td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(scores?.culture_fit)        : '<span class="score-chip none">—</span>'}</td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(scores?.work_life_balance)  : '<span class="score-chip none">—</span>'}</td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(scores?.compensation)       : '<span class="score-chip none">—</span>'}</td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(c.tech_growth_score)        : '<span class="score-chip none">—</span>'}</td>
+      <td class="px-3 py-3 text-center">${analyzed ? scoreChip(c.career_growth_score)      : '<span class="score-chip none">—</span>'}</td>
+      <td class="px-3 py-3 text-center">${totalChip}</td>
+    </tr>`;
+  }).join('');
+
+  updateSortIcons('.sort-th', '.sort-icon', col, compareState.sortAsc);
+}
+
+document.querySelectorAll('.sort-th').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    compareState.sortAsc = compareState.sortCol === col ? !compareState.sortAsc : false;
+    compareState.sortCol = col;
+    renderComparison();
+  });
+});
+
+// ── 条件タブ ────────────────────────────────────────────────────────────────
+
+function fmtSalary(val) {
+  if (val == null || val === '') return '—';
+  const n = Number(val);
+  if (isNaN(n)) return val;
+  return n >= 10000 ? `${(n / 10000).toFixed(0)}万円` : `${n}万円`;
+}
+
+function fmtOvertime(val) {
+  if (val == null || val === '') return '—';
+  const n = Number(val);
+  if (isNaN(n)) return val;
+  const cls = n <= 20 ? 'text-green-600' : n <= 40 ? 'text-yellow-600' : 'text-red-600';
+  return `<span class="${cls} font-medium">${n}h</span>`;
+}
+
+function fmtPaidLeave(val) {
+  if (val == null || val === '') return '—';
+  const n = Number(val);
+  if (isNaN(n)) return val;
+  const cls = n >= 70 ? 'text-green-600' : n >= 50 ? 'text-yellow-600' : 'text-red-600';
+  return `<span class="${cls} font-medium">${n}%</span>`;
+}
+
+function boolBadge(val, trueLabel = 'あり', falseLabel = 'なし') {
+  if (val == null || val === '') return '<span class="text-gray-400">—</span>';
+  const isTrue = val === true || val === 1 || val === 'true' || val === 'あり' || val === '有';
+  return isTrue
+    ? `<span class="text-green-600 font-medium">✓ ${trueLabel}</span>`
+    : `<span class="text-gray-400">${falseLabel}</span>`;
+}
+
+function renderComparisonConditions() {
+  const tbody = document.getElementById('conditions-tbody');
+  if (!tbody) return;
+
+  const companies = state.companies || [];
+  const rows = [...companies];
+
+  const col = condState.sortCol;
+  rows.sort((a, b) => {
+    let va, vb;
+    switch (col) {
+      case 'name':         va = a.name || ''; vb = b.name || ''; break;
+      case 'status':       va = STATUS_ORDER[a.status] ?? 99; vb = STATUS_ORDER[b.status] ?? 99; break;
+      case 'salary':       va = a.expected_first_salary ?? -1; vb = b.expected_first_salary ?? -1; break;
+      case 'salary_upper': va = a.salary_upper ?? -1;          vb = b.salary_upper ?? -1; break;
+      case 'overtime':     va = a.overtime_hours ?? 9999;      vb = b.overtime_hours ?? 9999; break;
+      case 'paid_leave':   va = a.paid_leave_rate ?? -1;       vb = b.paid_leave_rate ?? -1; break;
+      default:             va = a.name || ''; vb = b.name || ''; break;
+    }
+    if (typeof va === 'string') return condState.sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    return condState.sortAsc ? va - vb : vb - va;
+  });
+
+  tbody.innerHTML = rows.map(c => `<tr onclick="selectCompanyAndSwitchList(${c.id})">
+    ${nameCell(c)}${statusCell(c)}
+    <td class="px-3 py-3 text-right font-medium text-gray-800">${fmtSalary(c.expected_first_salary)}</td>
+    <td class="px-3 py-3 text-right font-medium text-gray-800">${fmtSalary(c.salary_upper)}</td>
+    <td class="px-3 py-3 text-left text-gray-700">${c.location || '<span class="text-gray-400">—</span>'}</td>
+    <td class="px-3 py-3 text-left text-gray-700">${c.work_style || '<span class="text-gray-400">—</span>'}</td>
+    <td class="px-3 py-3 text-right">${fmtOvertime(c.overtime_hours)}</td>
+    <td class="px-3 py-3 text-right">${fmtPaidLeave(c.paid_leave_rate)}</td>
+    <td class="px-3 py-3 text-center">${boolBadge(c.transfer, '可能性あり', 'なし')}</td>
+    <td class="px-3 py-3 text-center">${boolBadge(c.inexperienced_ok)}</td>
+    <td class="px-3 py-3 text-left text-gray-700 max-w-48">
+      <span class="truncate block">${c.training_program || '<span class="text-gray-400">—</span>'}</span>
+    </td>
+  </tr>`).join('');
+
+  updateSortIcons('.sort-th-c', '.sort-icon-c', col, condState.sortAsc);
+}
+
+document.querySelectorAll('.sort-th-c').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    condState.sortAsc = condState.sortCol === col ? !condState.sortAsc : false;
+    condState.sortCol = col;
+    renderComparisonConditions();
+  });
+});
+
+// ── タブ切り替え ────────────────────────────────────────────────────────────
+
+function switchCompareTab(tab) {
+  const scorePanel = document.getElementById('compare-tab-score');
+  const condPanel  = document.getElementById('compare-tab-cond');
+  const btnScore   = document.getElementById('btn-tab-score');
+  const btnCond    = document.getElementById('btn-tab-cond');
+
+  compareState.tab = tab;
+  if (tab === 'score') {
+    scorePanel.classList.remove('hidden');
+    condPanel.classList.add('hidden');
+    btnScore.classList.add('bg-indigo-600', 'text-white');
+    btnScore.classList.remove('bg-white', 'text-gray-500');
+    btnCond.classList.remove('bg-indigo-600', 'text-white');
+    btnCond.classList.add('bg-white', 'text-gray-500');
+    renderComparison();
+  } else {
+    condPanel.classList.remove('hidden');
+    scorePanel.classList.add('hidden');
+    btnCond.classList.add('bg-indigo-600', 'text-white');
+    btnCond.classList.remove('bg-white', 'text-gray-500');
+    btnScore.classList.remove('bg-indigo-600', 'text-white');
+    btnScore.classList.add('bg-white', 'text-gray-500');
+    renderComparisonConditions();
+  }
+}
+
+document.getElementById('btn-tab-score').addEventListener('click', () => switchCompareTab('score'));
+document.getElementById('btn-tab-cond').addEventListener('click',  () => switchCompareTab('cond'));
+
+// ── 共通ユーティリティ ──────────────────────────────────────────────────────
+
+function updateSortIcons(thSel, iconSel, activeCol, asc) {
+  document.querySelectorAll(thSel).forEach(th => {
+    th.classList.remove('active');
+    th.querySelector(iconSel).textContent = '↕';
+  });
+  const activeTh = document.querySelector(`${thSel}[data-col="${activeCol}"]`);
+  if (activeTh) {
+    activeTh.classList.add('active');
+    activeTh.querySelector(iconSel).textContent = asc ? '↑' : '↓';
+  }
+}
+
+function selectCompanyAndSwitchList(id) {
+  switchView('list');
+  selectCompany(id);
+}
+
+// ── ビュー切り替え ──────────────────────────────────────────────────────────
+
+function switchView(mode) {
+  const sidebar    = document.getElementById('sidebar');
+  const detailSec  = document.getElementById('detail-section');
+  const compareSec = document.getElementById('comparison-section');
+  const btnList    = document.getElementById('btn-view-list');
+  const btnCompare = document.getElementById('btn-view-compare');
+  const bubble     = document.getElementById('btn-ai-bubble');
+
+  if (mode === 'compare') {
+    sidebar.classList.add('hidden');
+    detailSec.classList.add('hidden');
+    compareSec.classList.remove('hidden');
+    btnList.classList.remove('bg-indigo-600', 'text-white');
+    btnList.classList.add('bg-white', 'text-gray-500');
+    btnCompare.classList.add('bg-indigo-600', 'text-white');
+    btnCompare.classList.remove('bg-white', 'text-gray-500');
+    if (bubble) bubble.classList.add('hidden');
+    // アクティブなタブを再描画
+    if (compareState.tab === 'cond') renderComparisonConditions();
+    else renderComparison();
+  } else {
+    sidebar.classList.remove('hidden');
+    detailSec.classList.remove('hidden');
+    compareSec.classList.add('hidden');
+    btnList.classList.add('bg-indigo-600', 'text-white');
+    btnList.classList.remove('bg-white', 'text-gray-500');
+    btnCompare.classList.remove('bg-indigo-600', 'text-white');
+    btnCompare.classList.add('bg-white', 'text-gray-500');
+    if (bubble && state.selectedId) bubble.classList.remove('hidden');
+  }
+}
+
+document.getElementById('btn-view-list').addEventListener('click',    () => switchView('list'));
+document.getElementById('btn-view-compare').addEventListener('click', () => switchView('compare'));
 
 init();
 
