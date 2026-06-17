@@ -107,7 +107,7 @@ function renderCompanyList() {
         </div>
         <div class="text-xs text-gray-400 mt-0.5 truncate">${c.url}</div>
         <div class="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
-          ${c.hiring_probability_score ? `<span>採用 <b>${c.hiring_probability_score}</b>/10</span>` : ''}
+          ${c.hiring_probability_score ? `<span>採用 <b>${Math.round(c.hiring_probability_score)}%</b></span>` : ''}
           ${c.expected_first_salary   ? `<span>💴 ${c.expected_first_salary}万</span>` : ''}
           ${!analyzed ? '<span class="text-orange-400 font-medium">未分析</span>' : ''}
         </div>
@@ -263,7 +263,7 @@ function renderAnalysisSection(c, scores, sw, strategy, skillStack) {
       <div class="bg-white rounded-xl border border-gray-200 p-4">
         <h3 class="text-sm font-semibold text-gray-700 mb-3">個人最適化スコア</h3>
         <div class="space-y-3">
-          ${scoreBar('採用可能性',   c.hiring_probability_score, 'blue')}
+          ${hiringBar(c.hiring_probability_score)}
           ${scoreBar('技術成長しやすさ', c.tech_growth_score,   'indigo')}
           ${scoreBar('キャリア成長', c.career_growth_score,      'purple')}
           ${c.inexperienced_ok !== null ? `
@@ -502,6 +502,23 @@ function scoreBar(label, score, color) {
       </div>
       <div class="bg-gray-100 rounded-full h-1.5">
         <div class="${bg} h-1.5 rounded-full transition-all" style="width:${score * 10}%"></div>
+      </div>
+    </div>`;
+}
+
+// 採用確率専用バー（0〜100%スケール）
+function hiringBar(score) {
+  if (score === null || score === undefined) return '';
+  const pct = Math.min(Math.round(score), 100);
+  const color = pct >= 70 ? 'text-green-600' : pct >= 40 ? 'text-yellow-600' : 'text-red-500';
+  return `
+    <div class="score-bar-hiring">
+      <div class="flex justify-between text-xs mb-1">
+        <span class="text-gray-600">採用可能性</span>
+        <span class="font-semibold ${color}">${pct}%</span>
+      </div>
+      <div class="bg-gray-100 rounded-full h-1.5">
+        <div class="bg-blue-500 h-1.5 rounded-full transition-all" style="width:${pct}%"></div>
       </div>
     </div>`;
 }
