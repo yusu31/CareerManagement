@@ -167,7 +167,7 @@ function renderDetail(c) {
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
       ${infoCard('勤務地',     c.location)}
       ${infoCard('勤務形態',   c.work_style)}
-      ${infoCard('通勤（車）', c.commute_time_car ? `${c.commute_time_car}分` : null)}
+      ${infoCard('通勤（旧）', c.commute_time_car ? `${c.commute_time_car}分` : null)}
       ${infoCard('開発形態',   c.development_type)}
       ${infoCard('年収レンジ', c.salary)}
       ${infoCard('予想初年収', c.expected_first_salary ? `${c.expected_first_salary}万円` : null)}
@@ -176,6 +176,12 @@ function renderDetail(c) {
     </div>
 
     ${analyzed ? renderAnalysisSection(c, scores, sw, strategy, skillStack) : renderNotAnalyzed()}
+
+    <!-- 通勤カード -->
+    ${renderCommuteCard(c)}
+
+    <!-- 求人元タグ -->
+    ${renderJobSourcesCard(c)}
 
     <!-- メモ -->
     <div class="bg-white rounded-xl border border-gray-200 p-4 mt-5">
@@ -489,6 +495,177 @@ function infoCard(label, value) {
       <div class="text-xs text-gray-400 mb-0.5">${label}</div>
       <div class="text-sm font-medium ${value ? 'text-gray-800' : 'text-gray-300'}">${value || '—'}</div>
     </div>`;
+}
+
+// ── 通勤カード（詳細パネル用）────────────────────────────────────────────
+
+function renderCommuteCard(c) {
+  const cd = parseJSON(c.commute_data);
+  const MODES = [
+    { key: 'car',        icon: '🚗', label: '車' },
+    { key: 'shinkansen', icon: '🚄', label: '新幹線+電車' },
+    { key: 'train',      icon: '🚃', label: '在来線' },
+  ];
+
+  const modeButtons = MODES.map(m =>
+    `<button class="commute-transport-tab ${m.key === 'car' ? 'active' : ''}"
+       onclick="switchDetailCommuteTab(this,'${c.id}','${m.key}')" data-mode="${m.key}">
+       ${m.icon} ${m.label}
+     </button>`
+  ).join('');
+
+  let contentHtml = '';
+  if (!cd) {
+    if (!c.location) {
+      contentHtml = `<p class="text-sm text-gray-400">勤務地が未登録のため算出できません</p>`;
+    } else {
+      contentHtml = `
+        <p class="text-sm text-gray-500 mb-3">郡山市字原中からの通勤情報を算出します</p>
+        <button onclick="calcCommuteDetail(${c.id})"
+          class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-4 py-1.5 rounded-lg font-medium transition-colors">
+          🗺 Geminiで通勤時間を算出
+        </button>`;
+    }
+  } else {
+    const buildStats = (d) => {
+      if (!d) return '<p class="text-sm text-gray-400">データなし</p>';
+      const h = Math.floor((d.minutes || 0) / 60);
+      const m = (d.minutes || 0) % 60;
+      const timeStr = d.minutes ? (h > 0 ? `${h}時間${m > 0 ? m+'分' : ''}` : `${m}分`) : '—';
+      const fCls = d.feasibility === 'daily' ? '#15803d' : d.feasibility === 'occasional' ? '#a16207' : '#b91c1c';
+      const fLabel = d.feasibility === 'daily' ? '毎日通勤OK' : d.feasibility === 'occasional' ? '週1〜2回なら可' : '通勤は困難';
+      return `
+        <div class="flex gap-3 flex-wrap mb-3">
+          <div class="commute-stat"><span class="commute-stat-value">${timeStr}</span><span class="commute-stat-label">片道</span></div>
+          <div class="commute-stat"><span class="commute-stat-value">${d.distance_km ? d.distance_km+'km' : '—'}</span><span class="commute-stat-label">距離</span></div>
+          <div class="commute-stat"><span class="commute-stat-value">${d.cost_yen ? (d.cost_yen/100*100|0).toLocaleString()+'円' : '—'}</span><span class="commute-stat-label">片道費用</span></div>
+        </div>
+        <p class="text-xs text-gray-500 mb-1">📍 ${d.route || '—'}</p>
+        <p class="text-xs font-medium" style="color:${fCls}">● ${fLabel}</p>
+        <button onclick="calcCommuteDetail(${c.id})" class="mt-3 text-xs text-gray-400 hover:text-indigo-500 transition-colors">再算出</button>`;
+    };
+
+    contentHtml = MODES.map((m, i) =>
+      `<div id="commute-detail-panel-${c.id}-${m.key}" class="${i === 0 ? '' : 'hidden'}">${buildStats(cd[m.key])}</div>`
+    ).join('');
+  }
+
+  return `
+    <div class="bg-white rounded-xl border border-gray-200 p-4 mt-5">
+      <h3 class="text-sm font-semibold text-gray-700 mb-3">🗺 通勤情報（郡山市字原中から）</h3>
+      <div class="flex gap-2 mb-4">${modeButtons}</div>
+      <div id="commute-detail-content-${c.id}">${contentHtml}</div>
+    </div>`;
+}
+
+function switchDetailCommuteTab(btn, companyId, mode) {
+  const card = btn.closest('.bg-white');
+  card.querySelectorAll('.commute-transport-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  card.querySelectorAll(`[id^="commute-detail-panel-${companyId}-"]`).forEach(el => el.classList.add('hidden'));
+  const panel = document.getElementById(`commute-detail-panel-${companyId}-${mode}`);
+  if (panel) panel.classList.remove('hidden');
+}
+
+async function calcCommuteDetail(companyId) {
+  const btn = event.target;
+  btn.textContent = '算出中...';
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/companies/${companyId}/commute`, { method: 'POST' });
+    await selectCompany(companyId);
+    showToast('通勤時間を算出しました', 'success');
+  } catch (e) {
+    showToast(`エラー: ${e.message}`, 'error');
+    btn.textContent = '🗺 Geminiで通勤時間を算出';
+    btn.disabled = false;
+  }
+}
+
+// ── 求人元カード（詳細パネル用）──────────────────────────────────────────
+
+const COMMON_SOURCES = [
+  'リクルートエージェント', 'doda', 'マイナビ転職', 'ビズリーチ',
+  'Green', 'Wantedly', 'Indeed', '転職サイト（その他）',
+  '知人紹介', '直接応募',
+];
+
+function renderJobSourcesCard(c) {
+  const sources = parseJSON(c.job_sources) || [];
+  const tagsHtml = sources.map((s, i) =>
+    `<span class="source-tag-removable">${s}
+       <button onclick="removeJobSource(${c.id}, ${i})">×</button>
+     </span>`
+  ).join('');
+
+  const suggestHtml = COMMON_SOURCES
+    .filter(s => !sources.includes(s))
+    .map(s => `<button onclick="addJobSource(${c.id},'${s}')"
+         class="text-xs px-2.5 py-1 rounded-full border border-gray-200 text-gray-500
+                hover:border-violet-400 hover:text-violet-600 hover:bg-violet-50 transition-colors">
+         + ${s}
+       </button>`).join('');
+
+  return `
+    <div class="bg-white rounded-xl border border-gray-200 p-4 mt-5" id="sources-card-${c.id}">
+      <h3 class="text-sm font-semibold text-gray-700 mb-3">📋 求人元 / エージェント</h3>
+      <div class="source-input-wrap mb-3" id="sources-tags-${c.id}" onclick="focusSourceInput(${c.id})">
+        ${tagsHtml}
+        <input type="text" id="source-input-${c.id}" placeholder="${sources.length === 0 ? 'エージェント名を入力...' : ''}"
+          class="flex-1 min-w-24 text-xs outline-none bg-transparent"
+          onkeydown="handleSourceInput(event, ${c.id})">
+      </div>
+      <div class="flex flex-wrap gap-1.5 mt-2">
+        ${suggestHtml}
+      </div>
+    </div>`;
+}
+
+function focusSourceInput(id) {
+  document.getElementById(`source-input-${id}`)?.focus();
+}
+
+async function addJobSource(companyId, source) {
+  const c = state.companies?.find(c => c.id === companyId);
+  const current = parseJSON(c?.job_sources) || [];
+  if (current.includes(source)) return;
+  await saveJobSources(companyId, [...current, source]);
+}
+
+async function removeJobSource(companyId, index) {
+  const c = state.companies?.find(c => c.id === companyId);
+  const current = parseJSON(c?.job_sources) || [];
+  current.splice(index, 1);
+  await saveJobSources(companyId, current);
+}
+
+async function handleSourceInput(event, companyId) {
+  if (event.key !== 'Enter') return;
+  const input = event.target;
+  const val = input.value.trim();
+  if (!val) return;
+  input.value = '';
+  await addJobSource(companyId, val);
+}
+
+async function saveJobSources(companyId, sources) {
+  try {
+    const updated = await api(`/api/companies/${companyId}/sources`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_sources: sources }),
+    });
+    // 企業リスト内のデータを更新（再描画なし）
+    if (state.companies) {
+      const idx = state.companies.findIndex(c => c.id === companyId);
+      if (idx !== -1) state.companies[idx] = updated;
+    }
+    // 求人元カードのみ再描画
+    const card = document.getElementById(`sources-card-${companyId}`);
+    if (card) card.outerHTML = renderJobSourcesCard(updated);
+  } catch (e) {
+    showToast(`保存エラー: ${e.message}`, 'error');
+  }
 }
 
 function scoreBar(label, score, color) {
@@ -959,21 +1136,73 @@ function boolBadge(val, trueLabel = 'あり', falseLabel = 'なし') {
     : `<span class="text-gray-400">${falseLabel}</span>`;
 }
 
+// 選択中の通勤交通手段
+let selectedCommuteMode = 'car';
+
+function fmtCommute(commuteData, mode) {
+  if (!commuteData) return '<button class="text-xs text-indigo-500 hover:underline" onclick="event.stopPropagation();calcCommuteInTable(this)" data-id="">算出</button>';
+  const d = parseJSON(commuteData)?.[mode];
+  if (!d) return '<span class="text-gray-400 text-xs">—</span>';
+  if (d.minutes == null) return '<span class="text-gray-400 text-xs">非現実的</span>';
+  const h = Math.floor(d.minutes / 60);
+  const m = d.minutes % 60;
+  const timeStr = h > 0 ? `${h}時間${m > 0 ? m + '分' : ''}` : `${m}分`;
+  const fCls = d.feasibility === 'daily' ? 'feasibility-daily'
+             : d.feasibility === 'occasional' ? 'feasibility-occasional'
+             : 'feasibility-impractical';
+  return `<span class="${fCls}">${timeStr}</span>`;
+}
+
+function fmtDistance(commuteData, mode) {
+  if (!commuteData) return '—';
+  const d = parseJSON(commuteData)?.[mode];
+  if (!d?.distance_km) return '—';
+  return `${d.distance_km.toFixed(0)} km`;
+}
+
+function fmtSources(jobSources) {
+  const arr = parseJSON(jobSources) || [];
+  if (arr.length === 0) return '<span class="text-gray-400 text-xs">未登録</span>';
+  return arr.map(s => `<span class="source-tag">${s}</span>`).join(' ');
+}
+
+async function calcCommuteInTable(btn) {
+  const id = btn.dataset.id || state.selectedId;
+  if (!id) return;
+  btn.textContent = '算出中...';
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/companies/${id}/commute`, { method: 'POST' });
+    // 企業データを再取得して再描画
+    state.companies = await api('/api/companies');
+    renderComparisonConditions();
+  } catch (e) {
+    showToast(`通勤算出エラー: ${e.message}`, 'error');
+    btn.textContent = '算出';
+    btn.disabled = false;
+  }
+}
+
 function renderComparisonConditions() {
   const tbody = document.getElementById('conditions-tbody');
   if (!tbody) return;
 
   const companies = state.companies || [];
   const rows = [...companies];
+  const mode = selectedCommuteMode;
 
   const col = condState.sortCol;
   rows.sort((a, b) => {
     let va, vb;
+    const cdA = parseJSON(a.commute_data)?.[mode];
+    const cdB = parseJSON(b.commute_data)?.[mode];
     switch (col) {
       case 'name':         va = a.name || ''; vb = b.name || ''; break;
       case 'status':       va = STATUS_ORDER[a.status] ?? 99; vb = STATUS_ORDER[b.status] ?? 99; break;
       case 'salary':       va = a.expected_first_salary ?? -1; vb = b.expected_first_salary ?? -1; break;
       case 'salary_upper': va = a.salary_upper ?? -1;          vb = b.salary_upper ?? -1; break;
+      case 'commute':      va = cdA?.minutes ?? 9999;          vb = cdB?.minutes ?? 9999; break;
+      case 'distance':     va = cdA?.distance_km ?? 9999;      vb = cdB?.distance_km ?? 9999; break;
       case 'overtime':     va = a.overtime_hours ?? 9999;      vb = b.overtime_hours ?? 9999; break;
       case 'paid_leave':   va = a.paid_leave_rate ?? -1;       vb = b.paid_leave_rate ?? -1; break;
       default:             va = a.name || ''; vb = b.name || ''; break;
@@ -982,23 +1211,56 @@ function renderComparisonConditions() {
     return condState.sortAsc ? va - vb : vb - va;
   });
 
-  tbody.innerHTML = rows.map(c => `<tr onclick="selectCompanyAndSwitchList(${c.id})">
-    ${nameCell(c)}${statusCell(c)}
-    <td class="px-3 py-3 text-right font-medium text-gray-800">${fmtSalary(c.expected_first_salary)}</td>
-    <td class="px-3 py-3 text-right font-medium text-gray-800">${fmtSalary(c.salary_upper)}</td>
-    <td class="px-3 py-3 text-left text-gray-700">${c.location || '<span class="text-gray-400">—</span>'}</td>
-    <td class="px-3 py-3 text-left text-gray-700">${c.work_style || '<span class="text-gray-400">—</span>'}</td>
-    <td class="px-3 py-3 text-right">${fmtOvertime(c.overtime_hours)}</td>
-    <td class="px-3 py-3 text-right">${fmtPaidLeave(c.paid_leave_rate)}</td>
-    <td class="px-3 py-3 text-center">${boolBadge(c.transfer, '可能性あり', 'なし')}</td>
-    <td class="px-3 py-3 text-center">${boolBadge(c.inexperienced_ok)}</td>
-    <td class="px-3 py-3 text-left text-gray-700 max-w-48">
-      <span class="truncate block">${c.training_program || '<span class="text-gray-400">—</span>'}</span>
-    </td>
-  </tr>`).join('');
+  tbody.innerHTML = rows.map(c => {
+    const hasCommute = !!c.commute_data;
+    const commuteCell = hasCommute
+      ? fmtCommute(c.commute_data, mode)
+      : `<button class="text-xs text-indigo-500 hover:text-indigo-700 font-medium underline-offset-2 hover:underline"
+           onclick="event.stopPropagation();calcCommuteRow(${c.id}, this)">算出する</button>`;
+
+    return `<tr onclick="selectCompanyAndSwitchList(${c.id})">
+      ${nameCell(c)}${statusCell(c)}
+      <td class="px-3 py-3 text-right font-semibold text-gray-800">${fmtSalary(c.expected_first_salary)}</td>
+      <td class="px-3 py-3 text-right font-semibold text-gray-800">${fmtSalary(c.salary_upper)}</td>
+      <td class="px-3 py-3 text-center">${commuteCell}</td>
+      <td class="px-3 py-3 text-center text-gray-600">${fmtDistance(c.commute_data, mode)}</td>
+      <td class="px-3 py-3 text-left text-gray-700">${c.location || '<span class="text-gray-400">—</span>'}</td>
+      <td class="px-3 py-3 text-left text-gray-700">${c.work_style || '<span class="text-gray-400">—</span>'}</td>
+      <td class="px-3 py-3 text-right">${fmtOvertime(c.overtime_hours)}</td>
+      <td class="px-3 py-3 text-right">${fmtPaidLeave(c.paid_leave_rate)}</td>
+      <td class="px-3 py-3 text-center">${boolBadge(c.inexperienced_ok)}</td>
+      <td class="px-3 py-3">${fmtSources(c.job_sources)}</td>
+    </tr>`;
+  }).join('');
 
   updateSortIcons('.sort-th-c', '.sort-icon-c', col, condState.sortAsc);
 }
+
+async function calcCommuteRow(companyId, btn) {
+  const orig = btn.textContent;
+  btn.textContent = '算出中...';
+  btn.disabled = true;
+  try {
+    await api(`/api/companies/${companyId}/commute`, { method: 'POST' });
+    state.companies = await api('/api/companies');
+    renderComparisonConditions();
+    showToast('通勤時間を算出しました', 'success');
+  } catch (e) {
+    showToast(`エラー: ${e.message}`, 'error');
+    btn.textContent = orig;
+    btn.disabled = false;
+  }
+}
+
+// 交通手段タブの切り替え
+document.querySelectorAll('.commute-transport-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    selectedCommuteMode = btn.dataset.mode;
+    document.querySelectorAll('.commute-transport-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderComparisonConditions();
+  });
+});
 
 document.querySelectorAll('.sort-th-c').forEach(th => {
   th.addEventListener('click', () => {
