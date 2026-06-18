@@ -2009,7 +2009,7 @@ function replaceThinkingWithResult(updatedFields) {
   thinking.outerHTML = `
     <div class="flex gap-2.5 items-start">
       <div class="ai-orb-sm w-6 h-6 rounded-full flex items-center justify-center text-xs text-white flex-shrink-0">✦</div>
-      <div class="text-slate-200 text-sm bg-white/5 rounded-xl rounded-tl-none px-3 py-2 max-w-xs leading-relaxed">${label}</div>
+      <div class="text-slate-200 text-sm bg-white/5 rounded-xl rounded-tl-none px-3 py-2 leading-relaxed">${label}</div>
     </div>`;
   document.getElementById('ai-chat-messages').scrollTop = 99999;
 }
@@ -2175,7 +2175,7 @@ function replaceThinkingWithBulkResult(companies) {
   msgEl.className = 'ai-msg-ai flex gap-2.5 items-start';
   msgEl.innerHTML = `
     <div class="ai-orb-sm w-6 h-6 rounded-full flex items-center justify-center text-xs text-white flex-shrink-0">✦</div>
-    <div class="text-slate-300 text-sm leading-relaxed bg-white/5 rounded-xl rounded-tl-none px-3 py-2.5 max-w-xs">
+    <div class="text-slate-300 text-sm leading-relaxed bg-white/5 rounded-xl rounded-tl-none px-3 py-2.5">
       ${bodyHtml}
     </div>`;
 
