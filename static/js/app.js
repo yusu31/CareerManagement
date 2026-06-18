@@ -173,6 +173,7 @@ function renderDetail(c) {
       ${commuteInfoCard(c)}
       ${infoCard('開発形態',   c.development_type)}
       ${infoCard('年収レンジ', c.salary)}
+      ${infoCard('賞与', c.bonus)}
       ${infoCard('予想初年収', c.expected_first_salary ? `${c.expected_first_salary}万円` : null)}
       ${infoCard('年収アッパー', c.salary_upper ? `${c.salary_upper}万円` : null)}
       ${infoCard('600万回収まで', c.years_to_recover ? `約${c.years_to_recover}年` : null)}
@@ -330,6 +331,22 @@ function renderAnalysisSection(c, scores, sw, strategy, skillStack) {
           `<span class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-full px-2.5 py-0.5">${s}</span>`
         ).join('')}
       </div>
+    </div>` : ''}
+
+    <!-- 福利厚生・資格補助 -->
+    ${c.benefits || c.qualification_support ? `
+    <div class="bg-white rounded-xl border border-gray-200 p-4 mb-4">
+      <h3 class="text-sm font-semibold text-gray-700 mb-3">福利厚生・資格補助</h3>
+      ${c.benefits ? `
+      <div class="mb-3">
+        <p class="text-xs font-medium text-gray-500 mb-1">福利厚生</p>
+        <p class="text-sm text-gray-700 leading-relaxed benefits-section">${c.benefits}</p>
+      </div>` : ''}
+      ${c.qualification_support ? `
+      <div>
+        <p class="text-xs font-medium text-gray-500 mb-1">資格補助・支援</p>
+        <p class="text-sm text-gray-700 leading-relaxed">${c.qualification_support}</p>
+      </div>` : ''}
     </div>` : ''}
   `;
 }
@@ -1378,6 +1395,8 @@ function renderComparisonConditions() {
       <td class="px-3 py-3 text-right">${fmtOvertime(c.overtime_hours)}</td>
       <td class="px-3 py-3 text-right">${fmtPaidLeave(c.paid_leave_rate)}</td>
       <td class="px-3 py-3 text-center">${boolBadge(c.inexperienced_ok)}</td>
+      <td class="px-3 py-3 text-left text-gray-700 max-w-[12rem] truncate" title="${c.bonus || ''}">${c.bonus || '<span class="text-gray-400">—</span>'}</td>
+      <td class="px-3 py-3 text-left text-gray-700 max-w-[12rem] truncate" title="${c.qualification_support || ''}">${c.qualification_support || '<span class="text-gray-400">—</span>'}</td>
       <td class="px-3 py-3">${fmtSources(c.job_sources)}</td>
     </tr>`;
   }).join('');
