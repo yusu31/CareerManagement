@@ -126,9 +126,12 @@ def _extract_docx_text(content: bytes) -> str:
         return ""
 
 
-def _build_parts(files: list[BulkFile]) -> list:
+def _build_parts(files: list[BulkFile], text: str = "") -> list:
     """Gemini に送信するコンテンツパーツのリストを構築する。"""
     parts: list = [_EXTRACT_PROMPT]
+
+    if text.strip():
+        parts.append(f"\n[テキスト情報]\n{text.strip()}")
 
     for f in files:
         if f.mime_type in _IMAGE_MIME_TYPES:
@@ -157,15 +160,15 @@ def _build_parts(files: list[BulkFile]) -> list:
     return parts
 
 
-def extract_companies(files: list[BulkFile]) -> list[dict]:
+def extract_companies(files: list[BulkFile], text: str = "") -> list[dict]:
     """
-    ファイル群から企業情報リストを Gemini で抽出する。
+    ファイル群・テキストから企業情報リストを Gemini で抽出する。
 
     Returns:
         企業情報 dict のリスト。各 dict は name/url/industry 等を持つ。
-        ファイルが空または解析不能な場合は空リストを返す。
+        入力が空または解析不能な場合は空リストを返す。
     """
-    parts = _build_parts(files)
+    parts = _build_parts(files, text)
     if len(parts) <= 1:
         return []
 

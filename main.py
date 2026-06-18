@@ -775,9 +775,12 @@ _BULK_VALID_COLUMNS = {
 
 
 @app.post("/api/bulk-import/preview", tags=["ai"])
-async def bulk_import_preview(files: list[UploadFile] = File(...)):
+async def bulk_import_preview(
+    text: str = Form(""),
+    files: list[UploadFile] = File([]),
+):
     """
-    ファイルから企業を抽出し、重複チェック付きのプレビューを返す。DBへの保存は行わない。
+    テキスト・ファイルから企業を抽出し、重複チェック付きのプレビューを返す。DBへの保存は行わない。
 
     各企業に status（"new" or "update"）と existing_id を付与して返す。
     """
@@ -790,11 +793,11 @@ async def bulk_import_preview(files: list[UploadFile] = File(...)):
         content = await f.read()
         bulk_files.append(BulkFile(filename=f.filename, content=content, mime_type=mime))
 
-    if not bulk_files:
-        raise HTTPException(status_code=400, detail="ファイルが添付されていません")
+    if not bulk_files and not text.strip():
+        raise HTTPException(status_code=400, detail="テキストまたはファイルを入力してください")
 
     try:
-        extracted = extract_companies(bulk_files)
+        extracted = extract_companies(bulk_files, text)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI解析に失敗しました: {str(e)}")
 
