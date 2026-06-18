@@ -1033,7 +1033,6 @@ function setImage(file) {
 }
 
 // ボタン・モーダル開閉
-document.getElementById('btn-add-schedule-image').addEventListener('click', openScheduleModal);
 document.getElementById('btn-close-schedule-modal').addEventListener('click', closeScheduleModal);
 document.getElementById('btn-cancel-schedule-modal').addEventListener('click', closeScheduleModal);
 document.getElementById('btn-back-to-paste').addEventListener('click', showPasteStep);
@@ -1771,7 +1770,7 @@ function switchView(mode) {
     btnList.classList.add('bg-white', 'text-gray-500');
     btnCompare.classList.add('bg-indigo-600', 'text-white');
     btnCompare.classList.remove('bg-white', 'text-gray-500');
-    if (bubble) bubble.classList.add('hidden');
+    // 比較モードでもバブルは常時表示（一括取り込み機能のため）
     // アクティブなタブを再描画
     if (compareState.tab === 'cond') renderComparisonConditions();
     else if (compareState.tab === 'rank') renderRanking();
@@ -1784,7 +1783,7 @@ function switchView(mode) {
     btnList.classList.remove('bg-white', 'text-gray-500');
     btnCompare.classList.remove('bg-indigo-600', 'text-white');
     btnCompare.classList.add('bg-white', 'text-gray-500');
-    if (bubble && state.selectedId) bubble.classList.remove('hidden');
+    // バブルは常時表示のため非表示→表示の制御は不要
   }
 }
 
@@ -1805,9 +1804,7 @@ const chatState = {
 // ── バブル表示・非表示 ──────────────────────────────────────────────────────
 
 function showAiBubble(companyName) {
-  const bubble = document.getElementById('btn-ai-bubble');
-  bubble.classList.remove('hidden', 'morphing');
-  bubble.classList.add('idle');
+  // ✦ ボタンは常時表示のためここでは company name の更新のみ行う
   document.getElementById('ai-panel-company-name').textContent = companyName;
 }
 
@@ -1816,6 +1813,19 @@ function showAiBubble(companyName) {
 function openAiPanel() {
   const panel  = document.getElementById('ai-chat-panel');
   const bubble = document.getElementById('btn-ai-bubble');
+
+  // 企業選択有無でパネルのタイトルと案内文を切り替える
+  if (state.selectedId) {
+    document.getElementById('ai-panel-title').textContent = 'AI情報補完';
+    document.getElementById('ai-welcome-text').textContent =
+      '求人票・面接メモ・URLなど、どんな情報でも送ってください。企業情報を自動で更新します。';
+  } else {
+    document.getElementById('ai-panel-title').textContent = 'AI企業取り込み';
+    document.getElementById('ai-panel-company-name').textContent = 'テキスト・スクショ・PDF・Excel に対応';
+    document.getElementById('ai-welcome-text').textContent =
+      '企業情報をテキストで貼り付けるか、スクショ・PDF・Excelをアップロードしてください。AIが自動で取り込みます。';
+  }
+
   bubble.classList.add('morphing');
   panel.classList.add('open');
   panel.setAttribute('aria-hidden', 'false');
@@ -1833,6 +1843,7 @@ function closeAiPanel() {
   }, 280);
 }
 
+// ✦ ボタン → 直接パネルを開く
 document.getElementById('btn-ai-bubble').addEventListener('click', openAiPanel);
 document.getElementById('btn-ai-panel-close').addEventListener('click', closeAiPanel);
 document.getElementById('ai-panel-overlay').addEventListener('click', closeAiPanel);
@@ -1998,7 +2009,7 @@ function replaceThinkingWithResult(updatedFields) {
   thinking.outerHTML = `
     <div class="flex gap-2.5 items-start">
       <div class="ai-orb-sm w-6 h-6 rounded-full flex items-center justify-center text-xs text-white flex-shrink-0">✦</div>
-      <div class="text-slate-200 text-sm bg-white/5 rounded-xl rounded-tl-none px-3 py-2 max-w-xs leading-relaxed">${label}</div>
+      <div class="text-slate-200 text-sm bg-white/5 rounded-xl rounded-tl-none px-3 py-2 leading-relaxed">${label}</div>
     </div>`;
   document.getElementById('ai-chat-messages').scrollTop = 99999;
 }
@@ -2039,8 +2050,6 @@ document.getElementById('ai-chat-input').addEventListener('keydown', e => {
 });
 
 async function sendToAI() {
-  if (!state.selectedId) return;
-
   const input      = document.getElementById('ai-chat-input');
   const sendBtn    = document.getElementById('btn-ai-send');
   const sendLabel  = document.getElementById('ai-send-label');
@@ -2059,45 +2068,152 @@ async function sendToAI() {
   addUserMessage(text, fileCount, urlCount);
   input.value = '';
 
-  // 添付・URLをクリア
   const filesSnapshot = [...chatState.pendingFiles];
   const urlsSnapshot  = [...chatState.pendingUrls];
   chatState.pendingFiles = [];
   chatState.pendingUrls  = [];
   renderAttachments();
   renderUrls();
-
   addThinkingMessage();
 
-  try {
-    const fd = new FormData();
-    fd.append('text', text);
-    fd.append('urls', JSON.stringify(urlsSnapshot));
-    filesSnapshot.forEach(f => fd.append('files', f.file, f.name));
+  if (state.selectedId) {
+    // ── 企業補完モード ─────────────────────────────────────────
+    try {
+      const fd = new FormData();
+      fd.append('text', text);
+      fd.append('urls', JSON.stringify(urlsSnapshot));
+      filesSnapshot.forEach(f => fd.append('files', f.file, f.name));
 
-    const res = await fetch(`/api/companies/${state.selectedId}/supplement`, {
-      method: 'POST',
-      body: fd,
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || 'エラーが発生しました');
+      const res = await fetch(`/api/companies/${state.selectedId}/supplement`, {
+        method: 'POST',
+        body: fd,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || 'エラーが発生しました');
+      }
+      const result = await res.json();
+      replaceThinkingWithResult(result.updated_fields || []);
+      if (result.updated_fields?.length > 0) {
+        await selectCompany(state.selectedId);
+        setTimeout(() => highlightUpdatedFields(result.updated_fields), 150);
+      }
+    } catch (err) {
+      replaceThinkingWithResult([]);
+      showToast(`AI補完エラー: ${err.message}`, 'error');
+    } finally {
+      sendBtn.disabled = false;
+      sendLabel.textContent = '送信';
+      filesSnapshot.forEach(f => { if (f.previewUrl) URL.revokeObjectURL(f.previewUrl); });
     }
-    const result = await res.json();
+  } else {
+    // ── 一括取り込みモード ────────────────────────────────────
+    try {
+      const fd = new FormData();
+      fd.append('text', text);
+      filesSnapshot.forEach(f => fd.append('files', f.file, f.name));
 
-    replaceThinkingWithResult(result.updated_fields || []);
+      const res = await fetch('/api/bulk-import/preview', { method: 'POST', body: fd });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || 'エラーが発生しました');
+      }
+      const data = await res.json();
+      const companies = data.companies || [];
 
-    // 詳細パネルを再描画
-    if (result.updated_fields?.length > 0) {
-      await selectCompany(state.selectedId);
-      setTimeout(() => highlightUpdatedFields(result.updated_fields), 150);
+      if (!companies.length) {
+        replaceThinkingWithBulkResult([]);
+      } else {
+        replaceThinkingWithBulkResult(companies);
+      }
+    } catch (err) {
+      replaceThinkingWithResult([]);
+      showToast(`取り込みエラー: ${err.message}`, 'error');
+    } finally {
+      sendBtn.disabled = false;
+      sendLabel.textContent = '送信';
+      filesSnapshot.forEach(f => { if (f.previewUrl) URL.revokeObjectURL(f.previewUrl); });
     }
-  } catch (err) {
-    replaceThinkingWithResult([]);
-    showToast(`AI補完エラー: ${err.message}`, 'error');
-  } finally {
-    sendBtn.disabled = false;
-    sendLabel.textContent = '送信';
-    filesSnapshot.forEach(f => { if (f.previewUrl) URL.revokeObjectURL(f.previewUrl); });
   }
 }
+
+function replaceThinkingWithBulkResult(companies) {
+  const msgs = document.getElementById('ai-chat-messages');
+  const thinking = msgs.querySelector('.ai-thinking');
+
+  let bodyHtml;
+  if (!companies.length) {
+    bodyHtml = '<p class="text-slate-400 text-xs">企業情報を検出できませんでした。より詳しい情報を送ってください。</p>';
+  } else {
+    const newCount    = companies.filter(c => c.status === 'new').length;
+    const updateCount = companies.filter(c => c.status === 'update').length;
+    const listHtml = companies.map(c => `
+      <div class="flex items-start gap-1.5 py-0.5">
+        <span class="text-xs flex-shrink-0 ${c.status === 'update' ? 'text-amber-400' : 'text-green-400'}">
+          ${c.status === 'update' ? '🔄' : '🆕'}
+        </span>
+        <span class="text-slate-200 text-xs leading-snug">
+          ${c.name || '（名称不明）'}${c.location ? ` / ${c.location}` : ''}${c.salary ? ` / ${c.salary}` : ''}
+        </span>
+      </div>`).join('');
+
+    // companies を安全にエスケープして data 属性に渡す
+    const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(companies))));
+    bodyHtml = `
+      <p class="font-medium text-white mb-2 text-sm">
+        ${companies.length}社を検出（新規 ${newCount} / 更新 ${updateCount}）
+      </p>
+      <div class="space-y-0.5 mb-3">${listHtml}</div>
+      <button data-bulk="${encoded}" onclick="registerBulkCompanies(this)"
+        class="w-full bg-violet-600 hover:bg-violet-500 text-white text-xs py-1.5 rounded-lg
+               font-medium transition-colors">
+        ${companies.length}社を登録する
+      </button>`;
+  }
+
+  const msgEl = document.createElement('div');
+  msgEl.className = 'ai-msg-ai flex gap-2.5 items-start';
+  msgEl.innerHTML = `
+    <div class="ai-orb-sm w-6 h-6 rounded-full flex items-center justify-center text-xs text-white flex-shrink-0">✦</div>
+    <div class="text-slate-300 text-sm leading-relaxed bg-white/5 rounded-xl rounded-tl-none px-3 py-2.5">
+      ${bodyHtml}
+    </div>`;
+
+  if (thinking) thinking.replaceWith(msgEl);
+  else msgs.appendChild(msgEl);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+window.registerBulkCompanies = async function(btn) {
+  const companies = JSON.parse(decodeURIComponent(escape(atob(btn.dataset.bulk))));
+  btn.disabled = true;
+  btn.textContent = '登録中...';
+  try {
+    const res = await fetch('/api/bulk-import/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ companies }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || '登録に失敗しました');
+    const result = await res.json();
+
+    const msgs = document.getElementById('ai-chat-messages');
+    const msgEl = document.createElement('div');
+    msgEl.className = 'ai-msg-ai flex gap-2.5 items-start';
+    msgEl.innerHTML = `
+      <div class="ai-orb-sm w-6 h-6 rounded-full flex items-center justify-center text-xs text-white flex-shrink-0">✦</div>
+      <div class="text-slate-300 text-sm bg-white/5 rounded-xl rounded-tl-none px-3 py-2">
+        ✅ ${result.inserted}社を新規登録・${result.updated}社を更新しました
+      </div>`;
+    msgs.appendChild(msgEl);
+    msgs.scrollTop = msgs.scrollHeight;
+
+    btn.closest('.ai-msg-ai').querySelector('button')?.remove();
+    await init();
+  } catch (err) {
+    showToast(`登録エラー: ${err.message}`, 'error');
+    btn.disabled = false;
+    btn.textContent = '登録する';
+  }
+};
+
