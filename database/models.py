@@ -128,8 +128,9 @@ def init_db() -> None:
 
         # 既存DBへの追加カラムマイグレーション（ADD COLUMN は冪等ではないためtry/exceptで対応）
         _safe_add_columns(conn, "companies", [
-            ("job_sources",  "TEXT DEFAULT '[]'"),   # 求人元タグ JSON配列
-            ("commute_data", "TEXT"),                 # 通勤データ JSON (車/新幹線/電車)
+            ("job_sources",           "TEXT DEFAULT '[]'"),  # 求人元タグ JSON配列
+            ("commute_data",          "TEXT"),                # 通勤データ JSON (車/新幹線/電車)
+            ("qualification_support", "TEXT"),                # 資格補助・支援制度
         ])
 
         print("[OK] データベースの初期化が完了しました")

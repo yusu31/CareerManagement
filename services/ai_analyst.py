@@ -108,6 +108,7 @@ def _build_prompt(url: str, scraped_text: str, user_profile: dict) -> str:
   "career_growth_score": キャリアアップしやすい度（1〜10の整数）,
   "career_path": "想定キャリアの道筋（2〜3行）",
   "benefits": "福利厚生まとめ（文字列）",
+  "qualification_support": "資格補助・支援制度（例: 応用情報・AWS・G検定 費用全額支給、など。不明ならnull）",
   "summary": "事業概要（3〜5行）",
   "strengths_weaknesses": {{
     "strengths": ["強み1", "強み2", "強み3"],

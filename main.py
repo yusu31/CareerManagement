@@ -94,6 +94,7 @@ class CompanyUpdate(BaseModel):
     career_growth_score: Optional[int] = None
     career_path: Optional[str] = None
     benefits: Optional[str] = None
+    qualification_support: Optional[str] = None
     summary: Optional[str] = None
     strengths_weaknesses: Optional[str] = None
     interview_strategy: Optional[str] = None
@@ -531,8 +532,8 @@ async def analyze_company_endpoint(company_id: int):
         "salary", "bonus", "expected_first_salary", "salary_upper", "years_to_recover",
         "inexperienced_ok", "training_program", "hiring_probability_score",
         "job_description", "skill_stack", "tech_growth_score", "career_growth_score",
-        "career_path", "benefits", "summary", "strengths_weaknesses",
-        "interview_strategy", "scores",
+        "career_path", "benefits", "qualification_support", "summary",
+        "strengths_weaknesses", "interview_strategy", "scores",
     }
     updates = {k: v for k, v in updates.items() if k in valid_columns}
 
@@ -662,7 +663,7 @@ async def supplement_company(
         "salary_upper", "inexperienced_ok", "training_program",
         "hiring_probability_score", "job_description", "skill_stack",
         "tech_growth_score", "career_growth_score", "career_path",
-        "benefits", "summary", "strengths_weaknesses",
+        "benefits", "qualification_support", "summary", "strengths_weaknesses",
         "interview_strategy", "scores",
     }
     safe_updates = {k: v for k, v in updates.items() if k in valid_columns}
