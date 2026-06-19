@@ -139,23 +139,23 @@ def _build_parts(files: list[BulkFile], text: str = "") -> list:
             parts.append({"mime_type": f.mime_type, "data": resized})
 
         elif f.mime_type == "application/pdf":
-            text = _extract_pdf_text(f.content)
-            if len(text.strip()) >= 100:
-                parts.append(f"\n[PDF: {f.filename}]\n{text}")
+            extracted = _extract_pdf_text(f.content)
+            if len(extracted.strip()) >= 100:
+                parts.append(f"\n[PDF: {f.filename}]\n{extracted}")
             else:
                 # テキスト抽出不可 → 画像PDFとしてGemini Visionに直送
                 parts.append({"mime_type": "application/pdf", "data": f.content})
 
         elif (any(k in f.mime_type for k in ("spreadsheet", "ms-excel", "csv"))
               or f.filename.lower().endswith((".csv", ".xlsx", ".xls"))):
-            text = _extract_tabular_text(f.content, f.filename)
-            if text:
-                parts.append(f"\n[スプレッドシート: {f.filename}]\n{text}")
+            extracted = _extract_tabular_text(f.content, f.filename)
+            if extracted:
+                parts.append(f"\n[スプレッドシート: {f.filename}]\n{extracted}")
 
         elif "wordprocessingml" in f.mime_type:
-            text = _extract_docx_text(f.content)
-            if text:
-                parts.append(f"\n[Word: {f.filename}]\n{text}")
+            extracted = _extract_docx_text(f.content)
+            if extracted:
+                parts.append(f"\n[Word: {f.filename}]\n{extracted}")
 
     return parts
 

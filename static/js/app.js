@@ -92,9 +92,11 @@ function renderCompanyList() {
   }
 
   list.innerHTML = state.companies.map(c => {
-    const badge = STATUS_STYLE[c.status] || 'bg-gray-100 text-gray-600';
-    const sel = c.id === state.selectedId;
-    const analyzed = c.scores !== null;
+    const status     = c.status || '検討中';
+    const badge      = STATUS_STYLE[status] || 'bg-gray-100 text-gray-600';
+    const sel        = c.id === state.selectedId;
+    const analyzed   = c.scores !== null;
+    const displayUrl = c.url && !c.url.startsWith('unknown-') ? c.url : '(URL未登録)';
     return `
       <div class="company-card p-3 rounded-xl border cursor-pointer transition-all
         ${sel
@@ -103,9 +105,9 @@ function renderCompanyList() {
         data-id="${c.id}">
         <div class="flex items-start justify-between gap-2">
           <span class="font-medium text-sm truncate">${c.name || '(名称未取得)'}</span>
-          <span class="text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${badge}">${c.status}</span>
+          <span class="text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${badge}">${status}</span>
         </div>
-        <div class="text-xs text-gray-400 mt-0.5 truncate">${c.url}</div>
+        <div class="text-xs text-gray-400 mt-0.5 truncate">${displayUrl}</div>
         <div class="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
           ${c.hiring_probability_score ? `<span>採用 <b>${Math.round(c.hiring_probability_score)}%</b></span>` : ''}
           ${c.expected_first_salary   ? `<span>💴 ${c.expected_first_salary}万</span>` : ''}
@@ -117,6 +119,7 @@ function renderCompanyList() {
   list.querySelectorAll('.company-card').forEach(card =>
     card.addEventListener('click', () => selectCompany(parseInt(card.dataset.id)))
   );
+  updateBulkAnalyzeFooter();
 }
 
 // ── 企業詳細 ──────────────────────────────────────────────────────────────
@@ -124,9 +127,25 @@ function renderCompanyList() {
 async function selectCompany(id) {
   state.selectedId = id;
   renderCompanyList();
+
+  // キャッシュデータで即座に描画（クリックの応答を即時にする）
+  const cached = state.companies.find(c => c.id === id);
+  if (cached) {
+    renderDetail(cached);
+    showAiBubble(cached.name || cached.url);
+  }
+
+  // バックグラウンドで最新データ取得（通勤データ等の更新に備える）
   const company = await api(`/api/companies/${id}`);
-  renderDetail(company);
-  showAiBubble(company.name || company.url);
+  const idx = state.companies.findIndex(c => c.id === id);
+  if (idx !== -1) state.companies[idx] = company;
+
+  // 取得済みデータと差異があるときだけ再描画
+  if (JSON.stringify(cached) !== JSON.stringify(company)) {
+    renderDetail(company);
+    showAiBubble(company.name || company.url);
+  }
+
   // 勤務地が登録済みで通勤データが未算出なら自動でGemini算出
   if (company.location && !company.commute_data) {
     calcCommuteAuto(id);
@@ -420,6 +439,18 @@ function renderRadar(scores) {
   });
 }
 
+// ── API エラーを人間向けメッセージに変換 ────────────────────────────────────
+
+function friendlyApiError(err) {
+  const msg = err.message || '';
+  if (msg.includes('429') || msg.toLowerCase().includes('quota')) {
+    return 'APIの無料枠（1日20回）に達しました。しばらく時間をおいてから再試行してください。';
+  }
+  if (msg.includes('502')) return 'AI分析サーバーに接続できませんでした。再度お試しください。';
+  // 長すぎるエラーは最初の100文字だけ表示
+  return msg.length > 100 ? msg.slice(0, 100) + '…' : msg;
+}
+
 // ── AI 分析実行 ──────────────────────────────────────────────────────────
 
 async function runAnalysis(id) {
@@ -450,7 +481,7 @@ async function runAnalysis(id) {
     await loadCompanies();
     showToast('AI分析が完了しました！', 'success');
   } catch (e) {
-    showToast(`分析エラー: ${e.message}`, 'error');
+    showToast(`分析エラー: ${friendlyApiError(e)}`, 'error');
     if (analyzeBtn) { analyzeBtn.disabled = false; analyzeBtn.textContent = 'AI分析'; }
     if (ctaBtn)     { ctaBtn.disabled = false;     ctaBtn.textContent = 'AI分析を実行する'; }
   }
@@ -2109,8 +2140,11 @@ async function sendToAI() {
   } else {
     // ── 一括取り込みモード ────────────────────────────────────
     try {
+      const urlText = urlsSnapshot.length
+        ? '\n\n[URL情報]\n' + urlsSnapshot.join('\n')
+        : '';
       const fd = new FormData();
-      fd.append('text', text);
+      fd.append('text', text + urlText);
       filesSnapshot.forEach(f => fd.append('files', f.file, f.name));
 
       const res = await fetch('/api/bulk-import/preview', { method: 'POST', body: fd });
@@ -2139,7 +2173,7 @@ async function sendToAI() {
 
 function replaceThinkingWithBulkResult(companies) {
   const msgs = document.getElementById('ai-chat-messages');
-  const thinking = msgs.querySelector('.ai-thinking');
+  const thinking = document.getElementById('ai-thinking-msg');
 
   let bodyHtml;
   if (!companies.length) {
@@ -2184,6 +2218,72 @@ function replaceThinkingWithBulkResult(companies) {
   msgs.scrollTop = msgs.scrollHeight;
 }
 
+// ── 一括AI分析 ────────────────────────────────────────────────────────────────
+
+function updateBulkAnalyzeFooter() {
+  const unanalyzed = state.companies.filter(c => c.scores === null);
+  const footer = document.getElementById('bulk-analyze-footer');
+  const label  = document.getElementById('bulk-analyze-label');
+  if (unanalyzed.length > 0) {
+    footer.classList.remove('hidden');
+    label.textContent = `未分析 ${unanalyzed.length}社を一括分析`;
+  } else {
+    footer.classList.add('hidden');
+  }
+}
+
+document.getElementById('btn-bulk-analyze').addEventListener('click', () => {
+  const ids = state.companies.filter(c => c.scores === null).map(c => c.id);
+  if (ids.length) startBulkAnalyze(ids);
+});
+
+async function startBulkAnalyze(ids) {
+  const btn   = document.getElementById('btn-bulk-analyze');
+  const label = document.getElementById('bulk-analyze-label');
+  btn.disabled = true;
+
+  let done = 0;
+  let failed = 0;
+  let quotaExceeded = false;
+
+  for (const id of ids) {
+    label.textContent = `分析中... ${done + failed + 1} / ${ids.length}`;
+    try {
+      await api(`/api/companies/${id}/analyze`, { method: 'POST' });
+      done++;
+    } catch (err) {
+      const msg = err.message || '';
+      if (msg.includes('429') || msg.toLowerCase().includes('quota')) {
+        quotaExceeded = true;
+        break;
+      }
+      failed++;
+    }
+  }
+
+  btn.disabled = false;
+  await loadCompanies();
+
+  if (quotaExceeded) {
+    showToast(
+      `${done}社を分析後、APIの無料枠（1日20回）に達しました。残り${ids.length - done}社は明日以降に。`,
+      'error'
+    );
+  } else {
+    const msg = failed > 0
+      ? `${done}社を分析完了（${failed}社はエラー）`
+      : `${done}社の分析が完了しました！`;
+    showToast(msg, failed > 0 ? 'error' : 'success');
+  }
+}
+
+window._bulkAnalyzeFromChat = async function(btn, ids) {
+  btn.disabled = true;
+  btn.textContent = '分析を開始中...';
+  await startBulkAnalyze(ids);
+  btn.remove();
+};
+
 window.registerBulkCompanies = async function(btn) {
   const companies = JSON.parse(decodeURIComponent(escape(atob(btn.dataset.bulk))));
   btn.disabled = true;
@@ -2197,19 +2297,29 @@ window.registerBulkCompanies = async function(btn) {
     if (!res.ok) throw new Error((await res.json()).detail || '登録に失敗しました');
     const result = await res.json();
 
+    btn.closest('.ai-msg-ai').querySelector('button')?.remove();
+    await init();
+
+    const unanalyzedIds = state.companies.filter(c => c.scores === null).map(c => c.id);
+    const analyzeBtn = unanalyzedIds.length > 0
+      ? `<button onclick="window._bulkAnalyzeFromChat(this, ${JSON.stringify(unanalyzedIds)})"
+           class="mt-2 w-full bg-violet-600 hover:bg-violet-500 text-white text-xs py-1.5 rounded-lg
+                  font-medium transition-colors">
+           ⚡ 未分析 ${unanalyzedIds.length}社をまとめて分析する
+         </button>`
+      : '';
+
     const msgs = document.getElementById('ai-chat-messages');
     const msgEl = document.createElement('div');
     msgEl.className = 'ai-msg-ai flex gap-2.5 items-start';
     msgEl.innerHTML = `
       <div class="ai-orb-sm w-6 h-6 rounded-full flex items-center justify-center text-xs text-white flex-shrink-0">✦</div>
-      <div class="text-slate-300 text-sm bg-white/5 rounded-xl rounded-tl-none px-3 py-2">
+      <div class="text-slate-300 text-sm bg-white/5 rounded-xl rounded-tl-none px-3 py-2.5">
         ✅ ${result.inserted}社を新規登録・${result.updated}社を更新しました
+        ${analyzeBtn}
       </div>`;
     msgs.appendChild(msgEl);
     msgs.scrollTop = msgs.scrollHeight;
-
-    btn.closest('.ai-msg-ai').querySelector('button')?.remove();
-    await init();
   } catch (err) {
     showToast(`登録エラー: ${err.message}`, 'error');
     btn.disabled = false;

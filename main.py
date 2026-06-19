@@ -6,6 +6,7 @@ CareerSync AI — FastAPI エントリーポイント
 """
 
 import json
+import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -858,8 +859,8 @@ async def bulk_import_register(body: BulkImportRegister):
                         )
                     updated += 1
             else:
-                # 新規登録
-                url = item.url or f"unknown-{item.name or 'company'}"
+                # 新規登録（URL未指定の場合はUUIDで一意なダミーURLを生成）
+                url = item.url or f"unknown-{uuid.uuid4().hex[:8]}"
                 conn.execute(
                     """INSERT INTO companies (url, name, job_url, industry, location,
                        salary, work_style, employees, development_type, inexperienced_ok, notes)
