@@ -43,6 +43,14 @@
     <!-- 左: 企業リスト（リストビュー時のみ表示） -->
     <aside id="sidebar" class="w-72 bg-white border-r border-gray-200 flex flex-col overflow-hidden flex-shrink-0">
       <div id="company-list" class="flex-1 overflow-y-auto p-3 space-y-2"></div>
+      <!-- 一括分析フッター（未分析企業がある時だけ表示） -->
+      <div id="bulk-analyze-footer" class="hidden border-t border-gray-100 p-3 flex-shrink-0">
+        <button id="btn-bulk-analyze"
+          class="w-full bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-medium
+                 py-2 px-3 rounded-lg transition-colors flex items-center justify-center gap-1.5">
+          ⚡ <span id="bulk-analyze-label">未分析 0社を一括分析</span>
+        </button>
+      </div>
     </aside>
 
     <!-- 右: 詳細パネル（リストビュー時） -->

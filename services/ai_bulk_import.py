@@ -35,8 +35,8 @@ _EXTRACT_PROMPT = """あなたは転職活動支援AIです。
 [
   {
     "name": "企業名（必須、不明なら null）",
-    "url": "コーポレートURL（不明なら null）",
-    "job_url": "求人ページURL（不明なら null）",
+    "url": "コーポレートURL（文書に記載がない場合は企業名・業種・所在地から公式サイトURLを推定すること。推定できない場合のみ null）",
+    "job_url": "求人ページURL（文書中にURLがあれば必ず入れる。不明なら null）",
     "industry": "業種（不明なら null）",
     "location": "勤務地（不明なら null）",
     "salary": "年収レンジ（例: 400〜600万円、不明なら null）",
@@ -50,8 +50,9 @@ _EXTRACT_PROMPT = """あなたは転職活動支援AIです。
 
 【注意】
 - 企業が複数あればすべて配列要素として返す
-- 情報が見当たらないフィールドは null にする
-- URLらしき文字列は必ず url か job_url に入れる"""
+- url は必ず埋めること。文書になければ企業名から推定する（例: 株式会社○○ → https://www.○○.co.jp）
+- URLらしき文字列は必ず url か job_url に入れる
+- 存在しない・確信が持てないURLは null にする（ハルシネーション禁止）"""
 
 
 @dataclass
@@ -139,23 +140,23 @@ def _build_parts(files: list[BulkFile], text: str = "") -> list:
             parts.append({"mime_type": f.mime_type, "data": resized})
 
         elif f.mime_type == "application/pdf":
-            text = _extract_pdf_text(f.content)
-            if len(text.strip()) >= 100:
-                parts.append(f"\n[PDF: {f.filename}]\n{text}")
+            extracted = _extract_pdf_text(f.content)
+            if len(extracted.strip()) >= 100:
+                parts.append(f"\n[PDF: {f.filename}]\n{extracted}")
             else:
                 # テキスト抽出不可 → 画像PDFとしてGemini Visionに直送
                 parts.append({"mime_type": "application/pdf", "data": f.content})
 
         elif (any(k in f.mime_type for k in ("spreadsheet", "ms-excel", "csv"))
               or f.filename.lower().endswith((".csv", ".xlsx", ".xls"))):
-            text = _extract_tabular_text(f.content, f.filename)
-            if text:
-                parts.append(f"\n[スプレッドシート: {f.filename}]\n{text}")
+            extracted = _extract_tabular_text(f.content, f.filename)
+            if extracted:
+                parts.append(f"\n[スプレッドシート: {f.filename}]\n{extracted}")
 
         elif "wordprocessingml" in f.mime_type:
-            text = _extract_docx_text(f.content)
-            if text:
-                parts.append(f"\n[Word: {f.filename}]\n{text}")
+            extracted = _extract_docx_text(f.content)
+            if extracted:
+                parts.append(f"\n[Word: {f.filename}]\n{extracted}")
 
     return parts
 
